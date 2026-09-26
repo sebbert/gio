@@ -12,6 +12,7 @@ import (
 	"runtime"
 	"runtime/cgo"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -336,6 +337,12 @@ static int isMiniaturized(CFTypeRef windowRef) {
 		return window.miniaturized ? 1 : 0;
 	}
 }
+
+static bool isFinishedLaunching(void) {
+	@autoreleasepool {
+		return (NSApp != nil && [NSApp isRunning]) || [[NSRunningApplication currentApplication] isFinishedLaunching];
+	}
+}
 */
 import "C"
 
@@ -344,6 +351,11 @@ func init() {
 	runtime.LockOSThread()
 	// Register launch finished listener.
 	C.gio_init()
+	// When loaded into an already running application (e.g. as a plugin),
+	// the launch notification has already been posted and will not arrive.
+	if C.isFinishedLaunching() {
+		gio_onFinishLaunching()
+	}
 }
 
 // AppKitViewEvent notifies the client of changes to the window AppKit handles.
@@ -1004,8 +1016,10 @@ func gio_onDestroy(h C.uintptr_t) {
 
 //export gio_onFinishLaunching
 func gio_onFinishLaunching() {
-	close(launched)
+	launchedOnce.Do(func() { close(launched) })
 }
+
+var launchedOnce sync.Once
 
 //export gio_onOpenURI
 func gio_onOpenURI(uri C.CFTypeRef) {
